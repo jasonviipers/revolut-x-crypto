@@ -83,87 +83,99 @@ The signature process ensures authenticity. The signature is constructed from th
 
 1. **Timestamp** — Unix time in milliseconds (the `X-Revx-Timestamp` header value)
 2. **HTTP Method** — uppercase string, e.g. `GET`, `POST`
-3. **Request Path** — the full path including query parameters (e.g., `/api/1.0/balances`)
-4. **Request Body** — the hashed JSON body string (if present)
+3. **Request Path** — the full path including query parameters (e.g., `/api/1.0/orders/active`)
+4. **Query String** — The URL query string if present (e.g.,`limit=10`). Do not include the `?.`
+5. **Request Body** — The minified JSON body string, if present.
 
-#### Construct the Message String
-
-```
-{TIMESTAMP}{HTTP_METHOD}{REQUEST_PATH}{REQUEST_BODY}
-```
+> **Note**
+> When concatenating, do not add any separators (spaces, newlines, or commas) between the fields.
 
 **Example Message:**
+
+```json
+1765360896219POST/api/1.0/orders{"client_order_id":"3b364427-1f4f-4f66-9935-86b6fb115d26","symbol":"BTC-USD","side":"BUY","order_configuration":{"limit":{"base_size":"0.1","price":"90000.1"}}}
 ```
-1746007718237GET/api/1.0/balances
-```
 
----
+## 2. Sign the message
 
-### Sign the Message
-
-Sign the constructed message string using your Ed25519 private key.
-
-1. Base64-encode the resulting signature.
-2. Send this value in the `X-Revx-Signature` header.
-
----
+1. Sign the constructed string using your **Ed25519 private key**.
+2. **Base64-encode** the resulting signature.
+3. Send this value in the `X-Revx-Signature` header.
 
 ### Code Examples
 
 #### Python
-
 ```python
-import base64
-import time
-from pathlib import Path
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    import base64
+    from pathlib import Path
+    from nacl.signing import SigningKey
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.backends import default_backend
 
-# 1. Load the private key
-private_key_pem = Path("private_key.pem").read_bytes()
-private_key = serialization.load_pem_private_key(private_key_pem, password=None)
+    # 1. Load your Private Key
+    pem_data = Path("private.pem").read_bytes()
+    private_key_obj = serialization.load_pem_private_key(
+        pem_data,
+        password=None,
+        backend=default_backend()
+    )
 
-# 2. Prepare the message
-timestamp = str(int(time.time() * 1000))
-method = "GET"
-path = "/api/1.0/configuration/currencies"
-body = ""
-message = f"{timestamp}{method}{path}{body}"
+    # Extract raw bytes for PyNaCl
+    raw_private = private_key_obj.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption()
+    )
 
-# 3. Sign the message
-signature = private_key.sign(message.encode("utf-8"))
-encoded_signature = base64.b64encode(signature).decode("utf-8")
+    # 2. Prepare the message
+    timestamp = "1746007718237"
+    method = "GET"
+    path = "/api/1.0/orders/active"
+    query = "status=open&limit=10"
+    body = "" # Empty for GET
 
-# 4. Use the signature in the X-Revx-Signature header
-print(f"X-Revx-Signature: {encoded_signature}")
+    # Concatenate without separators
+    message = f"{timestamp}{method}{path}{query}{body}".encode('utf-8')
+
+    # 3. Sign and Encode
+    signing_key = SigningKey(raw_private)
+    signed = signing_key.sign(message)
+    signature = base64.b64encode(signed.signature).decode()
+
+    print(f"X-Revx-Signature: {signature}")
 ```
 
 #### Node.js
 
 ```javascript
-const crypto = require("crypto");
-const fs = require("fs");
+    const crypto = require('crypto');
+    const fs = require('fs');
 
-// 1. Load the private key
-const privateKey = fs.readFileSync("private_key.pem", "utf8");
+    // 1. Load your Private Key
+    const privateKey = fs.readFileSync('private.pem', 'utf8');
 
-// 2. Prepare the message
-const timestamp = Date.now().toString();
-const method = "GET";
-const path = "/api/1.0/configuration/currencies";
-const body = "";
-const message = `${timestamp}${method}${path}${body}`;
+    // 2. Prepare the message
+    const timestamp = Date.now().toString();
+    const method = 'POST';
+    const path = '/api/1.0/crypto-exchange/orders';
+    const body = JSON.stringify({
+    symbol: "BTC/USD",
+    type: "limit",
+    side: "buy",
+    qty: "0.005"
+    });
 
-// 3. Sign the message
-const sign = crypto.createSign("ed25519");
-sign.update(message);
-const signature = sign.sign(privateKey, "base64");
+    // Concatenate without separators
+    const message = timestamp + method + path + body;
 
-// 4. Use the signature in the X-Revx-Signature header
-console.log(`X-Revx-Signature: ${signature}`);
+    // 3. Sign and Encode
+    // Note: Use crypto.sign with null to indicate pure Ed25519 signing (no hashing algorithm)
+    const signatureBuffer = crypto.sign(null, Buffer.from(message), privateKey);
+    const signature = signatureBuffer.toString('base64');
+
+    console.log(`X-Revx-Timestamp: ${timestamp}`);
+    console.log(`X-Revx-Signature: ${signature}`);
 ```
-
----
 
 ## API Endpoints
 
